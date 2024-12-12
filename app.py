@@ -1,4 +1,12 @@
 from flask import Flask, request, abort, jsonify
+import os
+import openai
+import dropbox
+from datetime import datetime
+from dropbox.files import WriteMode, CreateFolderError
+from dropbox.exceptions import ApiError
+import requests
+from dotenv import load_dotenv
 
 from linebot.v3.webhook import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -11,12 +19,9 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import (
     MessageEvent,
-    TextMessageContent
+    TextMessageContent,
+    ImageMessageContent
 )
-
-import os
-import openai
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -31,12 +36,60 @@ handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 # OpenAI configuration
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-def get_openai_response(text):
+# Dropbox configuration
+DROPBOX_APP_KEY = os.getenv('DROPBOX_APP_KEY')
+DROPBOX_APP_SECRET = os.getenv('DROPBOX_APP_SECRET')
+DROPBOX_FOLDER = '/家庭相簿'
+DROPBOX_SHARE_URL = 'https://www.dropbox.com/scl/fo/mreawj5sy70nj99fgz3wq/AFNjwBnR1TVitYnhLVpSuGU?rlkey=7dr1bsfas0idpn2l7tx2556ui&st=nvu968nl&dl=0'
+
+# 初始化 Dropbox OAuth2 流程
+dbx = dropbox.Dropbox(
+    oauth2_refresh_token=os.getenv('DROPBOX_REFRESH_TOKEN'),
+    app_key=DROPBOX_APP_KEY,
+    app_secret=DROPBOX_APP_SECRET
+)
+
+def save_to_dropbox(image_content, filename):
+    """將圖片保存到 Dropbox"""
     try:
+        # 確保資料夾存在
+        try:
+            dbx.files_create_folder_v2(DROPBOX_FOLDER)
+        except ApiError as e:
+            if not isinstance(e.error, CreateFolderError) or \
+               not e.error.is_path() or \
+               not e.error.get_path().is_conflict():
+                raise
+        
+        # 上傳文件
+        file_path = f"{DROPBOX_FOLDER}/{filename}"
+        dbx.files_upload(
+            image_content,
+            file_path,
+            mode=WriteMode('overwrite')
+        )
+        return True
+    except ApiError as e:
+        app.logger.error(f"Dropbox API error: {e}")
+        return False
+
+def get_openai_response(text):
+    """獲取 OpenAI 回應"""
+    try:
+        # 限制輸入文字長度
+        if len(text) > 1000:
+            text = text[:1000] + "..."
+            
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": """你是一個友善、幽默的聊天機器人。
+                - 用輕鬆、自然的語氣交談
+                - 回應要簡潔有趣
+                - 可以適當使用表情符號
+                - 避免過於正式或機械化的回答
+                - 如果不確定的事情，要誠實說不知道
+                - 注意保持對話的安全性和適當性"""},
                 {"role": "user", "content": text}
             ],
             max_tokens=1000,
@@ -47,18 +100,26 @@ def get_openai_response(text):
         app.logger.error(f"OpenAI API error: {e}")
         return "抱歉，我現在無法回應，請稍後再試。"
 
+def download_line_content(message_id):
+    """下載 LINE 消息內容"""
+    try:
+        with ApiClient(configuration) as api_client:
+            messaging_api = MessagingApi(api_client)
+            message_content = messaging_api.get_message_content(message_id)
+            return message_content.content
+    except Exception as e:
+        app.logger.error(f"Error downloading content: {e}")
+        return None
+
 @app.route("/callback", methods=['POST'])
 def callback():
-    # get X-Line-Signature header value
     signature = request.headers.get('X-Line-Signature')
     if not signature:
         abort(400, description='X-Line-Signature header is missing')
 
-    # get request body as text
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
 
-    # handle webhook body
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
@@ -71,12 +132,25 @@ def callback():
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessageContent)
-def handle_message(event):
+def handle_text_message(event):
+    """處理文字消息"""
     try:
-        # Get response from OpenAI
-        response_text = get_openai_response(event.message.text)
+        text = event.message.text
         
-        # Reply to user
+        # 檢查是否是"存相簿"命令
+        if text == "存相簿" and DROPBOX_SHARE_URL:
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text=f"這是您的相簿連結：\n{DROPBOX_SHARE_URL}")]
+                    )
+                )
+            return
+
+        # 對所有文字消息進行回應
+        response_text = get_openai_response(text)
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
             line_bot_api.reply_message_with_http_info(
@@ -86,7 +160,59 @@ def handle_message(event):
                 )
             )
     except Exception as e:
-        app.logger.error(f"Error handling message: {e}")
+        app.logger.error(f"Error handling text message: {e}")
+        try:
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text="抱歉，處理消息時發生錯誤。")]
+                    )
+                )
+        except:
+            pass
+
+@handler.add(MessageEvent, message=ImageMessageContent)
+def handle_image_message(event):
+    """處理圖片消息"""
+    try:
+        # 下載圖片
+        image_content = download_line_content(event.message.id)
+        if not image_content:
+            raise Exception("無法下載圖片")
+        
+        # 生成文件名（使用時間戳）
+        filename = f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        
+        # 保存到 Dropbox
+        if save_to_dropbox(image_content, filename):
+            response_text = "已將圖片保存到相簿中！"
+        else:
+            response_text = "抱歉，保存圖片時發生錯誤。"
+
+        # 回覆消息
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message_with_http_info(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=response_text)]
+                )
+            )
+    except Exception as e:
+        app.logger.error(f"Error handling image message: {e}")
+        try:
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text="抱歉，處理圖片時發生錯誤。")]
+                    )
+                )
+        except:
+            pass
 
 @app.route("/", methods=['GET'])
 def home():
@@ -101,18 +227,6 @@ def health():
         "status": "healthy",
         "message": "OK"
     })
-
-@app.errorhandler(400)
-def bad_request(e):
-    return jsonify(error=str(e)), 400
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify(error="Not found"), 404
-
-@app.errorhandler(500)
-def internal_error(e):
-    return jsonify(error="Internal server error"), 500
 
 if __name__ == "__main__":
     port = int(os.getenv('PORT', 8080))

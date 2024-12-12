@@ -7,6 +7,12 @@
     "healthCheck": {
       "path": "/health",
       "port": 8080
-    }
+    },
+    "rules": [
+      {
+        "path": "/callback",
+        "port": 8080
+      }
+    ]
   }
 }
