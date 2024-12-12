@@ -388,105 +388,37 @@ def process_message_queue():
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    # 獲取 X-Line-Signature header 值
     signature = request.headers['X-Line-Signature']
-
-    # 獲取請求體的文本
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
-
+    logger.info("Request body: " + body)
+    
     try:
-        # 驗證簽名
         handler.handle(body, signature)
     except InvalidSignatureError:
-        app.logger.error("Invalid signature. Please check your channel access token/channel secret.")
+        logger.error("Invalid signature")
         abort(400)
-
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+    
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessageContent)
-def handle_text_message(event):
+def handle_message(event):
     try:
-        user_id = event.source.user_id
-        text = event.message.text.strip()
-        
-        # 處理用戶消息並獲取回應
-        response = process_user_message(text, user_id)
-        
-        # 發送回應
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
             line_bot_api.reply_message_with_http_info(
                 event.reply_token,
                 {
-                    "messages": [{"type": "text", "text": response}]
+                    "messages": [{"type": "text", "text": "收到您的訊息！"}]
                 }
             )
-            
     except Exception as e:
-        app.logger.error(f"Error handling message: {str(e)}")
-        # 發送錯誤消息給用戶
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message_with_http_info(
-                event.reply_token,
-                {
-                    "messages": [{"type": "text", "text": "抱歉，處理您的消息時發生錯誤。請稍後再試。"}]
-                }
-            )
+        logger.error(f"Error handling message: {str(e)}")
 
-@handler.add(MessageEvent, message=StickerMessageContent)
-def handle_sticker_message(event):
-    try:
-        line_bot_api = get_line_bot_api()
-        reply_message_request = ReplyMessageRequest(
-            reply_token=event.reply_token,
-            messages=[StickerMessage(
-                package_id="11537",
-                sticker_id="52002734"
-            )]
-        )
-        line_bot_api.reply_message(
-            reply_message_request=reply_message_request
-        )
-    except Exception as e:
-        logger.error(f"Error in handle_sticker: {str(e)}")
-        try:
-            line_bot_api = get_line_bot_api()
-            error_message_request = ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text="抱歉，我暫時無法處理您的請求。請稍後再試。")]
-            )
-            line_bot_api.reply_message(
-                reply_message_request=error_message_request
-            )
-        except Exception as e2:
-            logger.error(f"Failed to send error message: {str(e2)}")
-
-@handler.add(MessageEvent, message=ImageMessageContent)
-def handle_image_message(event):
-    try:
-        line_bot_api = get_line_bot_api()
-        reply_message_request = ReplyMessageRequest(
-            reply_token=event.reply_token,
-            messages=[TextMessage(text="收到您的圖片了！")]
-        )
-        line_bot_api.reply_message(
-            reply_message_request=reply_message_request
-        )
-    except Exception as e:
-        logger.error(f"Error in handle_image: {str(e)}")
-        try:
-            line_bot_api = get_line_bot_api()
-            error_message_request = ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text="抱歉，我暫時無法處理您的請求。請稍後再試。")]
-            )
-            line_bot_api.reply_message(
-                reply_message_request=error_message_request
-            )
-        except Exception as e2:
-            logger.error(f"Failed to send error message: {str(e2)}")
+@app.route('/health')
+def health():
+    return 'OK', 200
 
 # 全局錯誤處理
 @app.errorhandler(Exception)
