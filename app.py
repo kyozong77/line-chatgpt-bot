@@ -55,8 +55,13 @@ def get_openai_response(message):
 
 @app.route("/callback", methods=['POST'])
 def callback():
+    if request.method != 'POST':
+        abort(405)
+
     # 獲取 X-Line-Signature header 值
-    signature = request.headers.get('X-Line-Signature', '')
+    signature = request.headers.get('X-Line-Signature')
+    if not signature:
+        abort(400, 'X-Line-Signature header is missing')
 
     # 獲取請求體文字
     body = request.get_data(as_text=True)
@@ -99,4 +104,5 @@ def health():
     return 'OK'
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
