@@ -19,6 +19,7 @@ app = Flask(__name__)
 # 設定日誌
 logger = logging.getLogger('line_bot')
 logger.setLevel(logging.INFO)
+os.makedirs('logs', exist_ok=True)  # 確保日誌目錄存在
 handler = RotatingFileHandler('logs/line_bot.log', maxBytes=10000000, backupCount=5)
 handler.setFormatter(logging.Formatter(
     '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
@@ -55,17 +56,20 @@ def get_openai_response(message):
 @app.route("/callback", methods=['POST'])
 def callback():
     # 獲取 X-Line-Signature header 值
-    signature = request.headers['X-Line-Signature']
+    signature = request.headers.get('X-Line-Signature', '')
 
     # 獲取請求體文字
     body = request.get_data(as_text=True)
-    logger.info("Request body: " + body)
+    logger.info(f"Request body: {body}")
 
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         logger.error("Invalid signature")
         abort(400)
+    except Exception as e:
+        logger.error(f"Error handling webhook: {str(e)}")
+        abort(500)
 
     return 'OK'
 
@@ -82,12 +86,17 @@ def handle_message(event):
                 messages=[reply_message]
             )
         )
+        logger.info(f"Successfully replied to message: {event.message.text}")
     except Exception as e:
         logger.error(f"Error handling message: {str(e)}")
+
+@app.route("/", methods=['GET'])
+def index():
+    return 'LINE Bot is running!'
 
 @app.route("/health", methods=['GET'])
 def health():
     return 'OK'
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
