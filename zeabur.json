@@ -1,0 +1,12 @@
+{
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "gunicorn --config gunicorn.conf.py app:app",
+    "healthCheck": {
+      "path": "/health",
+      "port": 8080
+    }
+  }
+}
