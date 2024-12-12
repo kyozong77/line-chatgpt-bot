@@ -1,102 +1,87 @@
 from flask import Flask, request, abort
-from linebot.v3 import WebhookHandler
-from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
-from linebot.v3.messaging import TextMessage, ReplyMessageRequest
-from linebot.v3.exceptions import InvalidSignatureError
-from dotenv import load_dotenv
-import openai
-import os
-import logging
-from logging.handlers import RotatingFileHandler
 
-# 載入環境變數
+from linebot.v3.webhook import WebhookHandler
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.messaging import (
+    Configuration,
+    ApiClient,
+    MessagingApi,
+    ReplyMessageRequest,
+    TextMessage
+)
+from linebot.v3.webhooks import (
+    MessageEvent,
+    TextMessageContent
+)
+
+import os
+import openai
+from dotenv import load_dotenv
+
 load_dotenv()
 
-# 初始化 Flask
 app = Flask(__name__)
 
-# 設定日誌
-logger = logging.getLogger('line_bot')
-logger.setLevel(logging.INFO)
-os.makedirs('logs', exist_ok=True)  # 確保日誌目錄存在
-handler = RotatingFileHandler('logs/line_bot.log', maxBytes=10000000, backupCount=5)
-handler.setFormatter(logging.Formatter(
-    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-))
-logger.addHandler(handler)
-
-# LINE Bot 設定
-configuration = Configuration(access_token=os.getenv('LINE_CHANNEL_ACCESS_TOKEN'))
+# LINE Bot configuration
+configuration = Configuration(
+    access_token=os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+)
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# 初始化 LINE Bot API
-api_client = ApiClient(configuration)
-line_bot_api = MessagingApi(api_client)
-
-# OpenAI 設定
+# OpenAI configuration
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-def get_openai_response(message):
+def get_openai_response(text):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": message}
+                {"role": "user", "content": text}
             ],
             max_tokens=1000,
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"OpenAI API error: {str(e)}")
+        print(f"OpenAI API error: {e}")
         return "抱歉，我現在無法回應，請稍後再試。"
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    if request.method != 'POST':
-        abort(405)
+    # get X-Line-Signature header value
+    signature = request.headers['X-Line-Signature']
 
-    # 獲取 X-Line-Signature header 值
-    signature = request.headers.get('X-Line-Signature')
-    if not signature:
-        abort(400, 'X-Line-Signature header is missing')
-
-    # 獲取請求體文字
+    # get request body as text
     body = request.get_data(as_text=True)
-    logger.info(f"Request body: {body}")
+    app.logger.info("Request body: " + body)
 
+    # handle webhook body
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        logger.error("Invalid signature")
+        app.logger.error("Invalid signature")
         abort(400)
-    except Exception as e:
-        logger.error(f"Error handling webhook: {str(e)}")
-        abort(500)
 
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
-    try:
-        # 使用 OpenAI 生成回應
-        response_text = get_openai_response(event.message.text)
-        reply_message = TextMessage(text=response_text)
-        
+    # Get response from OpenAI
+    response_text = get_openai_response(event.message.text)
+    
+    # Reply to user
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
         line_bot_api.reply_message_with_http_info(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
-                messages=[reply_message]
+                messages=[TextMessage(text=response_text)]
             )
         )
-        logger.info(f"Successfully replied to message: {event.message.text}")
-    except Exception as e:
-        logger.error(f"Error handling message: {str(e)}")
 
 @app.route("/", methods=['GET'])
-def index():
+def home():
     return 'LINE Bot is running!'
 
 @app.route("/health", methods=['GET'])
@@ -104,5 +89,4 @@ def health():
     return 'OK'
 
 if __name__ == "__main__":
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
