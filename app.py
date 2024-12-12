@@ -386,59 +386,54 @@ def process_message_queue():
             app.logger.error(f"Queue processing error: {str(e)}")
             time.sleep(1)  # 避免過度消耗資源
 
-@handler.add(MessageEvent, message=TextMessageContent)
-def handle_message(event):
-    try:
-        message = event.message.text
-        # 快速回應確認收到訊息
-        queue_message_processing(event.source.user_id, message, event.reply_token)
-        return 'OK'
-    except Exception as e:
-        app.logger.error(f"Error in handle_message: {str(e)}")
-        return 'OK'
-
-# 在應用啟動時啟動隊列處理
-@app.before_first_request
-def initialize_queue_processor():
-    processor_thread = Thread(target=process_message_queue, daemon=True)
-    processor_thread.start()
-    app.logger.info("Message queue processor started")
-
-# 健康檢查端點
-@app.route('/health')
-def health_check():
-    try:
-        # 測試 Redis 連接
-        redis_client.ping()
-        return jsonify({"status": "healthy", "redis": "connected"}), 200
-    except Exception as e:
-        return jsonify({"status": "unhealthy", "error": str(e)}), 500
-
-# Webhook 端點
 @app.route("/callback", methods=['POST'])
 def callback():
     # 獲取 X-Line-Signature header 值
     signature = request.headers['X-Line-Signature']
 
-    # 獲取請求內容
+    # 獲取請求體的文本
     body = request.get_data(as_text=True)
-    logger.info("Request body: " + body)
+    app.logger.info("Request body: " + body)
 
-    # 處理 webhook body
     try:
-        # 設置處理超時
+        # 驗證簽名
         handler.handle(body, signature)
-        logger.info("Successfully handled webhook")
-        return 'OK'
     except InvalidSignatureError:
-        logger.error("Invalid signature")
+        app.logger.error("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
+
+    return 'OK'
+
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_text_message(event):
+    try:
+        user_id = event.source.user_id
+        text = event.message.text.strip()
+        
+        # 處理用戶消息並獲取回應
+        response = process_user_message(text, user_id)
+        
+        # 發送回應
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message_with_http_info(
+                event.reply_token,
+                {
+                    "messages": [{"type": "text", "text": response}]
+                }
+            )
+            
     except Exception as e:
-        logger.error(f"Error in callback: {str(e)}")
-        logger.error(f"Error type: {type(e).__name__}")
-        logger.error("Full error details:", exc_info=True)
-        # 即使發生錯誤也返回 OK，避免 LINE 平台重試
-        return 'OK'
+        app.logger.error(f"Error handling message: {str(e)}")
+        # 發送錯誤消息給用戶
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message_with_http_info(
+                event.reply_token,
+                {
+                    "messages": [{"type": "text", "text": "抱歉，處理您的消息時發生錯誤。請稍後再試。"}]
+                }
+            )
 
 @handler.add(MessageEvent, message=StickerMessageContent)
 def handle_sticker_message(event):
