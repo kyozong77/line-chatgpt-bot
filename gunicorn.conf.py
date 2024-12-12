@@ -7,21 +7,19 @@ monkey.patch_all()
 port = os.getenv('PORT', '8080')
 bind = f"0.0.0.0:{port}"
 
-# 工作進程數（根據 CPU 核心數調整）
-workers = min(multiprocessing.cpu_count() + 1, 4)  # 最多 4 個進程
-
-# 工作模式
+# 減少工作進程數，提高穩定性
+workers = 2
 worker_class = "gevent"
 worker_connections = 1000
 
-# 超時時間
-timeout = 60
-graceful_timeout = 30
-keepalive = 2
+# 增加超時時間
+timeout = 120
+graceful_timeout = 60
+keepalive = 5
 
-# 最大請求數
-max_requests = 1000
-max_requests_jitter = 200
+# 調整請求限制
+max_requests = 500
+max_requests_jitter = 100
 
 # 日誌配置
 accesslog = "-"  # 輸出到 stdout
@@ -30,37 +28,26 @@ loglevel = "info"
 capture_output = True
 enable_stdio_inheritance = True
 
-# 日誌格式（包含請求 ID）
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" request_id=%(U)s'
-
 # 進程名稱
 proc_name = "line-bot"
 
 # 預加載應用
-preload_app = True
+preload_app = False  # 改為 False 以提高穩定性
 
 # 守護進程模式
 daemon = False
 
-# 安全設置
-limit_request_line = 4094
-limit_request_fields = 100
-limit_request_field_size = 8190
-
 # 優雅重啟
-graceful_timeout = 30
-timeout = 60
+graceful_timeout = 60
+
+# 性能調優
+backlog = 1024
+keepalive = 5
+threads = 1
 
 # 錯誤處理
 capture_output = True
 enable_stdio_inheritance = True
-
-# 性能調優
-backlog = 2048
-max_requests = 1000
-max_requests_jitter = 200
-keepalive = 2
-threads = 1
 
 # 環境變數
 raw_env = [

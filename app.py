@@ -1,4 +1,4 @@
-from flask import Flask, request, abort
+from flask import Flask, request, abort, jsonify
 from linebot.v3 import WebhookHandler
 from linebot.v3.messaging import Configuration, ApiClient, MessagingApi
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, StickerMessageContent, ImageMessageContent
@@ -408,14 +408,11 @@ def initialize_queue_processor():
 @app.route('/health')
 def health_check():
     try:
-        # 檢查 Redis 連接
+        # 測試 Redis 連接
         redis_client.ping()
-        # 檢查 LINE Bot API
-        get_line_bot_api()
-        return 'OK', 200
+        return jsonify({"status": "healthy", "redis": "connected"}), 200
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return 'Service Unavailable', 503
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 # Webhook 端點
 @app.route("/callback", methods=['POST'])
