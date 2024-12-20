@@ -149,16 +149,19 @@ def handle_text_message(event):
                 )
             return
 
-        # 對所有文字消息進行回應
-        response_text = get_openai_response(text)
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=response_text)]
+        # 檢查是否有人@機器人
+        if '@' in text:
+            # 移除 @ 和機器人名稱，只保留實際問題
+            actual_text = text.split(' ', 1)[1] if ' ' in text else text
+            response_text = get_openai_response(actual_text)
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text=response_text)]
+                    )
                 )
-            )
     except Exception as e:
         app.logger.error(f"Error handling text message: {e}")
         try:
