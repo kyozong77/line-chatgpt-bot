@@ -178,44 +178,8 @@ def handle_text_message(event):
 
 @handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image_message(event):
-    """處理圖片消息"""
-    try:
-        # 下載圖片
-        image_content = download_line_content(event.message.id)
-        if not image_content:
-            raise Exception("無法下載圖片")
-        
-        # 生成文件名（使用時間戳）
-        filename = f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        
-        # 保存到 Dropbox
-        if save_to_dropbox(image_content, filename):
-            response_text = "已將圖片保存到相簿中！"
-        else:
-            response_text = "抱歉，保存圖片時發生錯誤。"
-
-        # 回覆消息
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=response_text)]
-                )
-            )
-    except Exception as e:
-        app.logger.error(f"Error handling image message: {e}")
-        try:
-            with ApiClient(configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                line_bot_api.reply_message_with_http_info(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text="抱歉，處理圖片時發生錯誤。")]
-                    )
-                )
-        except:
-            pass
+    """處理圖片消息 - 不做任何動作"""
+    pass
 
 @app.route("/", methods=['GET'])
 def home():
